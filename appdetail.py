@@ -956,6 +956,49 @@ def render_eta_histogram(df: pd.DataFrame, eta_col: str = "ETA_PO"):
     )
     st.plotly_chart(fig, use_container_width=True)
 
+import sqlite3
+
+DB_FILE = "eta_deadline.db"
+
+def init_db():
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS po_eta (
+        Nomor_Dokumen TEXT PRIMARY KEY,
+        PIC TEXT,
+        ETA_PO TEXT,
+        Deadline_DO TEXT,
+        Deadline_SI TEXT
+    )
+    """)
+    conn.commit()
+    conn.close()
+
+def load_eta_data():
+    conn = sqlite3.connect(DB_FILE)
+    df = pd.read_sql("SELECT * FROM po_eta", conn)
+    conn.close()
+    for col in ["ETA_PO","Deadline_DO","Deadline_SI"]:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors="coerce")
+    return df
+
+def save_eta_data(nomor_dokumen, pic, eta_po, deadline_do, deadline_si):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("""
+    INSERT INTO po_eta (Nomor_Dokumen, PIC, ETA_PO, Deadline_DO, Deadline_SI)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(Nomor_Dokumen) DO UPDATE SET
+        PIC=excluded.PIC,
+        ETA_PO=excluded.ETA_PO,
+        Deadline_DO=excluded.Deadline_DO,
+        Deadline_SI=excluded.Deadline_SI
+    """, (nomor_dokumen, pic, str(eta_po), str(deadline_do), str(deadline_si)))
+    conn.commit()
+    conn.close()
+
 
 # =========================================================
 # 9) MAIN APP
@@ -1813,74 +1856,46 @@ def main():
     # CRUD langsung ke df_pr_final_valid
     # =====================================================
 
-# Filter PR hanya untuk status aktif (exclude Complete & Draft)
-
-
     elif selected_doc_type == "CRUD":
-            df_po_ed = df_po_final_f[
+        st.subheader("📌 CRUD ETA & Deadline")
+
+        # Inisialisasi DB
+        init_db()
+
+        # Ambil data dari API
+        df_po_api = df_po_final_f[
             ~df_po_final_f["Status"].isin(["Complete", "Draft"])
             ].copy()
-            df_po_ed = apply_search_filter(df_po_ed, search_number, search_status, search_pic)
-            st.subheader("🧩 Halaman CRUD Input Deadline")
-            st.info("Gunakan halaman ini untuk Create, Read, Update, Delete data PIC, ETA, Deadline DO, dan Deadline SI berdasarkan nomor dokumen.")
+        df_po_api = apply_search_filter(df_po_api, search_number, search_status, search_pic)
 
-            # --- Inisialisasi df_pr_ed ---
-            if "df_po_ed" not in st.session_state:
-                st.session_state["df_po_ed"] = pd.DataFrame(
-                    columns=["Nomor Dokumen","PIC","ETA_PO","Deadline_DO","Deadline_SI"]
-                )
+        # Pastikan kolom kunci ada dan konsisten
+        if "transaction_number" in df_po_api.columns:
+            df_po_api["Nomor_Dokumen"] = df_po_api["transaction_number"].astype(str).str.strip()
 
-            # --- Form CRUD ---
-            doc_number = st.text_input("Nomor Dokumen (PO / GRN / DO)")
-            pic_name = st.text_input("Nama PIC Procurement")
-            eta_po = st.date_input("ETA untuk PO")
-            deadline_do = st.date_input("Deadline DO untuk GRN")
-            deadline_si = st.date_input("Deadline SI untuk DO")
+        # Ambil data ETA dari SQLite
+        df_po_eta = load_eta_data()
 
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("💾 Simpan / Update"):
-                    new_row = {
-                        "Nomor Dokumen": doc_number,
-                        "PIC": pic_name,
-                        "ETA_PO": eta_po,
-                        "Deadline_DO": deadline_do,
-                        "Deadline_SI": deadline_si
-                    }
-                    # cek apakah dokumen sudah ada
-                    existing_index = st.session_state["df_pr_ed"].index[
-                        st.session_state["df_pr_ed"]["Nomor Dokumen"] == doc_number
-                    ].tolist()
-                    if existing_index:
-                        st.session_state["df_pr_ed"].loc[existing_index[0]] = new_row
-                        st.success(f"✅ Data untuk {doc_number} berhasil diperbarui!")
-                    else:
-                        st.session_state["df_pr_ed"] = pd.concat(
-                            [st.session_state["df_pr_ed"], pd.DataFrame([new_row])],
-                            ignore_index=True
-                        )
-                        st.success(f"✅ Data untuk {doc_number} berhasil ditambahkan!")
+        # Merge data API dan ETA
+        df_po_ed = pd.merge(df_po_api, df_po_eta, on="Nomor_Dokumen", how="left")
 
-            with col2:
-                if st.button("🗑️ Hapus Data"):
-                    existing_index = st.session_state["df_pr_ed"].index[
-                        st.session_state["df_pr_ed"]["Nomor Dokumen"] == doc_number
-                    ].tolist()
-                    if existing_index:
-                        st.session_state["df_pr_ed"].drop(existing_index[0], inplace=True)
-                        st.success(f"🗑️ Data untuk {doc_number} berhasil dihapus!")
-                    else:
-                     st.warning("Nomor dokumen tidak ditemukan.")
+        # Form CRUD
+        with st.form("form_eta_deadline"):
+            nomor_dokumen = st.text_input("Nomor Dokumen")
+            pic = st.text_input("PIC")
+            eta_po = st.date_input("ETA PO", value=None)
+            deadline_do = st.date_input("Deadline DO", value=None)
+            deadline_si = st.date_input("Deadline SI", value=None)
+            submitted = st.form_submit_button("Simpan")
 
-            # --- Read Data ---
-            st.markdown("### 📋 Daftar Data Final Valid (df_pr_ed)")
-            st.dataframe(st.session_state["df_pr_ed"], use_container_width=True)
+            if submitted:
+                save_eta_data(nomor_dokumen, pic, eta_po, deadline_do, deadline_si)
+                st.success(f"Data ETA/Deadline untuk dokumen {nomor_dokumen} berhasil disimpan.")
+                # reload SQLite lalu merge ulang
+                df_po_eta = load_eta_data()
+                df_po_ed = pd.merge(df_po_api, df_po_eta, on="Nomor_Dokumen", how="left")
 
-
-            with st.container(border=True):
-                st.subheader("👥 Distribusi ETA")
-                #st.dataframe(pic_aging_summary, use_container_width=True, hide_index=True)
-                render_eta_histogram(df_po_ed, "ETA_PO")
+        st.write("📄 Data ETA & Deadline saat ini:")
+        st.dataframe(df_po_ed)
 
 
     # ---------- FOOTER INFO ----------
