@@ -1003,6 +1003,14 @@ def save_eta_data(nomor_dokumen, pic, eta_po, deadline_do, deadline_si):
     conn.close()
 
 
+def delete_eta_data(nomor_dokumen):
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM po_eta WHERE Nomor_Dokumen=?", (nomor_dokumen,))
+    conn.commit()
+    conn.close()
+
+
 # =========================================================
 # 9) MAIN APP
 # =========================================================
@@ -1888,11 +1896,21 @@ def main():
             eta_po = st.date_input("ETA PO", value=None)
             deadline_do = st.date_input("Deadline DO", value=None)
             deadline_si = st.date_input("Deadline SI", value=None)
-            submitted = st.form_submit_button("Simpan")
 
-            if submitted:
+            simpan = st.form_submit_button("Simpan")
+            hapus = st.form_submit_button("Hapus Data")
+
+            if simpan:
                 save_eta_data(nomor_dokumen, pic, eta_po, deadline_do, deadline_si)
                 st.success(f"Data ETA/Deadline untuk dokumen {nomor_dokumen} berhasil disimpan.")
+                df_po_eta = load_eta_data()
+
+            if hapus:
+                delete_eta_data(nomor_dokumen)
+                st.success(f"Data untuk dokumen {nomor_dokumen} berhasil dihapus.")
+                df_po_eta = load_eta_data()
+
+
                 # reload SQLite lalu merge ulang
                 df_po_eta = load_eta_data()
                 df_po_ed = pd.merge(df_po_api, df_po_eta, on="Nomor_Dokumen", how="left")
