@@ -933,6 +933,29 @@ def render_sla_trend(df: pd.DataFrame, threshold: int = 5, date_col: str = "tran
 
     st.plotly_chart(fig, use_container_width=True)
 
+def render_eta_histogram(df: pd.DataFrame, eta_col: str = "ETA_PO"):
+    if df.empty or eta_col not in df.columns:
+        st.info("Data ETA tidak tersedia.")
+        return
+
+    # Hitung selisih hari antara ETA dan transaction_date
+    df = safe_to_datetime(df, "transaction_date")
+    df = safe_to_datetime(df, eta_col)
+    df["ETA_Days"] = (df[eta_col] - df["transaction_date"]).dt.days
+
+    fig = px.histogram(
+        df,
+        x="ETA_Days",
+        nbins=20,
+        title="Distribusi ETA (hari)",
+        color_discrete_sequence=["#2F80ED"]
+    )
+    fig.update_layout(
+        xaxis_title="Selisih ETA (hari)",
+        yaxis_title="Jumlah Dokumen"
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
 
 # =========================================================
 # 9) MAIN APP
@@ -985,11 +1008,17 @@ def main():
     #df_pur = data_old["pur"]
 
     df_pr_final = data_new["pr"]
+    df_po_final = data_new["po"]
     df_do_final = data_new["do"]
 
     # Pastikan kolom PIC dan Status sesuai
     #PR
     df_pr_final = df_pr_final.rename(columns={
+        "item_pic_procurement_name": "PIC Procurement",
+        "status_description": "Status"
+    })
+    #PO
+    df_po_final = df_po_final.rename(columns={
         "item_pic_procurement_name": "PIC Procurement",
         "status_description": "Status"
     })
@@ -1023,6 +1052,7 @@ def main():
     df_npr_f = df_npr.copy()
     #df_pur_f = df_pur.copy()
     df_pr_final_f = df_pr_final.copy()
+    df_po_final_f = df_po_final.copy()
     df_do_final_f = df_do_final.copy()
 
     # ---------- DATE FILTER ----------
@@ -1035,6 +1065,7 @@ def main():
         df_npr_f = apply_cumulative_filter(df_npr_f, report_end_date)
         #df_pur_f = apply_cumulative_filter(df_pur_f, report_end_date)
         df_pr_final_f = apply_cumulative_filter(df_pr_final_f, report_end_date)
+        df_po_final_f = apply_cumulative_filter(df_po_final_f, report_end_date)
         df_do_final_f = apply_cumulative_filter(df_do_final_f, report_end_date)
 
         # 🔹 Dataset baru (PR Final) pakai realisasi
@@ -1779,62 +1810,78 @@ def main():
 
 
     # =====================================================
-    # CRUD
+    # CRUD langsung ke df_pr_final_valid
     # =====================================================
+
+# Filter PR hanya untuk status aktif (exclude Complete & Draft)
 
 
     elif selected_doc_type == "CRUD":
-        st.subheader("🧩 Halaman CRUD Input Deadline")
-        st.info("Gunakan halaman ini untuk Create, Read, Update, Delete data PIC, ETA, Deadline DO, dan Deadline SI berdasarkan nomor dokumen.")
+            df_po_ed = df_po_final_f[
+            ~df_po_final_f["Status"].isin(["Complete", "Draft"])
+            ].copy()
+            df_po_ed = apply_search_filter(df_po_ed, search_number, search_status, search_pic)
+            st.subheader("🧩 Halaman CRUD Input Deadline")
+            st.info("Gunakan halaman ini untuk Create, Read, Update, Delete data PIC, ETA, Deadline DO, dan Deadline SI berdasarkan nomor dokumen.")
 
-        # --- Form CRUD ---
-        doc_number = st.text_input("Nomor Dokumen (PO / GRN / DO)")
-        pic_name = st.text_input("Nama PIC Procurement")
-        eta_po = st.date_input("ETA untuk PO")
-        deadline_do = st.date_input("Deadline DO untuk GRN")
-        deadline_si = st.date_input("Deadline SI untuk DO")
+            # --- Inisialisasi df_pr_ed ---
+            if "df_po_ed" not in st.session_state:
+                st.session_state["df_po_ed"] = pd.DataFrame(
+                    columns=["Nomor Dokumen","PIC","ETA_PO","Deadline_DO","Deadline_SI"]
+                )
 
-        if "crud_data" not in st.session_state:
-            st.session_state["crud_data"] = pd.DataFrame(columns=["Nomor Dokumen","PIC","ETA_PO","Deadline_DO","Deadline_SI"])
+            # --- Form CRUD ---
+            doc_number = st.text_input("Nomor Dokumen (PO / GRN / DO)")
+            pic_name = st.text_input("Nama PIC Procurement")
+            eta_po = st.date_input("ETA untuk PO")
+            deadline_do = st.date_input("Deadline DO untuk GRN")
+            deadline_si = st.date_input("Deadline SI untuk DO")
 
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("💾 Simpan / Update"):
-                new_row = {
-                    "Nomor Dokumen": doc_number,
-                    "PIC": pic_name,
-                    "ETA_PO": eta_po,
-                    "Deadline_DO": deadline_do,
-                    "Deadline_SI": deadline_si
-                }
-                # cek apakah dokumen sudah ada
-                existing_index = st.session_state["crud_data"].index[
-                    st.session_state["crud_data"]["Nomor Dokumen"] == doc_number
-                ].tolist()
-                if existing_index:
-                    st.session_state["crud_data"].loc[existing_index[0]] = new_row
-                    st.success(f"✅ Data untuk {doc_number} berhasil diperbarui!")
-                else:
-                    st.session_state["crud_data"] = pd.concat(
-                        [st.session_state["crud_data"], pd.DataFrame([new_row])],
-                        ignore_index=True
-                    )
-                    st.success(f"✅ Data untuk {doc_number} berhasil ditambahkan!")
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("💾 Simpan / Update"):
+                    new_row = {
+                        "Nomor Dokumen": doc_number,
+                        "PIC": pic_name,
+                        "ETA_PO": eta_po,
+                        "Deadline_DO": deadline_do,
+                        "Deadline_SI": deadline_si
+                    }
+                    # cek apakah dokumen sudah ada
+                    existing_index = st.session_state["df_pr_ed"].index[
+                        st.session_state["df_pr_ed"]["Nomor Dokumen"] == doc_number
+                    ].tolist()
+                    if existing_index:
+                        st.session_state["df_pr_ed"].loc[existing_index[0]] = new_row
+                        st.success(f"✅ Data untuk {doc_number} berhasil diperbarui!")
+                    else:
+                        st.session_state["df_pr_ed"] = pd.concat(
+                            [st.session_state["df_pr_ed"], pd.DataFrame([new_row])],
+                            ignore_index=True
+                        )
+                        st.success(f"✅ Data untuk {doc_number} berhasil ditambahkan!")
 
-        with col2:
-            if st.button("🗑️ Hapus Data"):
-                existing_index = st.session_state["crud_data"].index[
-                    st.session_state["crud_data"]["Nomor Dokumen"] == doc_number
-                ].tolist()
-                if existing_index:
-                    st.session_state["crud_data"].drop(existing_index[0], inplace=True)
-                    st.success(f"🗑️ Data untuk {doc_number} berhasil dihapus!")
-                else:
-                    st.warning("Nomor dokumen tidak ditemukan.")
+            with col2:
+                if st.button("🗑️ Hapus Data"):
+                    existing_index = st.session_state["df_pr_ed"].index[
+                        st.session_state["df_pr_ed"]["Nomor Dokumen"] == doc_number
+                    ].tolist()
+                    if existing_index:
+                        st.session_state["df_pr_ed"].drop(existing_index[0], inplace=True)
+                        st.success(f"🗑️ Data untuk {doc_number} berhasil dihapus!")
+                    else:
+                     st.warning("Nomor dokumen tidak ditemukan.")
 
-        # --- Read Data ---
-        st.markdown("### 📋 Daftar Data CRUD")
-        st.dataframe(st.session_state["crud_data"], use_container_width=True)
+            # --- Read Data ---
+            st.markdown("### 📋 Daftar Data Final Valid (df_pr_ed)")
+            st.dataframe(st.session_state["df_pr_ed"], use_container_width=True)
+
+
+            with st.container(border=True):
+                st.subheader("👥 Distribusi ETA")
+                #st.dataframe(pic_aging_summary, use_container_width=True, hide_index=True)
+                render_eta_histogram(df_po_ed, "ETA_PO")
+
 
     # ---------- FOOTER INFO ----------
     with st.expander("ℹ️ Informasi Teknis Dashboard"):
