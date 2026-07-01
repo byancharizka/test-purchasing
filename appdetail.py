@@ -969,7 +969,8 @@ def init_db():
         PIC TEXT,
         ETA_PO TEXT,
         Deadline_DO TEXT,
-        Deadline_SI TEXT
+        Deadline_SI TEXT,
+        Timestamp TEXT
     )
     """)
     conn.commit()
@@ -987,15 +988,17 @@ def load_eta_data():
 def save_eta_data(nomor_dokumen, pic, eta_po, deadline_do, deadline_si):
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # waktu input otomatis
     cursor.execute("""
-    INSERT INTO po_eta (Nomor_Dokumen, PIC, ETA_PO, Deadline_DO, Deadline_SI)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT INTO po_eta (Nomor_Dokumen, PIC, ETA_PO, Deadline_DO, Deadline_SI, Timestamp)
+    VALUES (?, ?, ?, ?, ?, ?)
     ON CONFLICT(Nomor_Dokumen) DO UPDATE SET
         PIC=excluded.PIC,
         ETA_PO=excluded.ETA_PO,
         Deadline_DO=excluded.Deadline_DO,
-        Deadline_SI=excluded.Deadline_SI
-    """, (nomor_dokumen, pic, str(eta_po), str(deadline_do), str(deadline_si)))
+        Deadline_SI=excluded.Deadline_SI,
+        Timestamp=excluded.Timestamp
+    """, (nomor_dokumen, pic, str(eta_po), str(deadline_do), str(deadline_si), now))
     conn.commit()
     conn.close()
 
@@ -1893,9 +1896,16 @@ def main():
                 # reload SQLite lalu merge ulang
                 df_po_eta = load_eta_data()
                 df_po_ed = pd.merge(df_po_api, df_po_eta, on="Nomor_Dokumen", how="left")
-
+                df_po_ed = pd.merge(df_po_api, df_po_eta, on="Nomor_Dokumen", how="left")
+                # cek apakah Timestamp ada
         st.write("📄 Data ETA & Deadline saat ini:")
+        #if "Timestamp" in df_po_ed.columns:
+            #st.dataframe(df_po_ed[["Nomor_Dokumen","PIC","ETA_PO","Deadline_DO","Deadline_SI","Timestamp"]])
+        #else:
+            #st.dataframe(df_po_ed[["Nomor_Dokumen","PIC","ETA_PO","Deadline_DO","Deadline_SI"]])
+        #st.write("📄 Data ETA & Deadline saat ini:")
         st.dataframe(df_po_ed)
+        #st.dataframe(df_po_ed[["Nomor_Dokumen","PIC","ETA_PO","Deadline_DO","Deadline_SI","Timestamp"]])
 
 
     # ---------- FOOTER INFO ----------
